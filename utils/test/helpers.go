@@ -2,7 +2,10 @@ package test
 
 import (
 	"errors"
+	"github.com/jzx17/gofetch/core"
+	"github.com/jzx17/gofetch/middlewares"
 	"io"
+	"net/http"
 )
 
 // MockReadCloser is a configurable implementation of io.ReadCloser for testing
@@ -159,4 +162,18 @@ func NewStreamErrorReader(data []byte, err error) *StreamErrorReader {
 		data: data,
 		err:  err,
 	}
+}
+
+// Helper function to create test middleware
+func CreateTestMiddleware(name string, fn func(req *http.Request)) middlewares.ConfigurableMiddleware {
+	return middlewares.CreateMiddleware(
+		name,
+		nil,
+		func(next core.RoundTripFunc) core.RoundTripFunc {
+			return func(req *http.Request) (*http.Response, error) {
+				fn(req)
+				return next(req)
+			}
+		},
+	)
 }
