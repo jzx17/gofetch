@@ -55,3 +55,26 @@ func WithAutoBufferResponse(autoBuffer bool) Option {
 		c.autoBuffer = autoBuffer
 	}
 }
+
+// WithSizeConfig sets the size configuration and updates the middleware.
+// Returns an error if any size value is negative.
+func WithSizeConfig(config SizeConfig) Option {
+	return func(c *Client) {
+		// Validate all size values
+		if config.MaxRequestBodySize < 0 {
+			panic("RequestBodySize must be greater than or equal to 0")
+		}
+		if config.MaxResponseBodySize < 0 {
+			panic("ResponseBodySize must be greater than or equal to 0")
+		}
+		if config.MaxStreamSize < 0 {
+			panic("StreamSize must be greater than or equal to 0")
+		}
+
+		c.sizeConfig = config
+		sizeMiddleware := SizeValidationMiddleware(config)
+
+		c.Use(sizeMiddleware)
+
+	}
+}

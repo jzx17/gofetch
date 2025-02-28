@@ -24,3 +24,6 @@ type Middleware = middlewares.Middleware
 var NewTLSTransport = core.NewTLSTransport
 var CreateMiddleware = middlewares.CreateMiddleware
 var ChainMiddlewares = middlewares.ChainMiddlewares
+var SizeValidationMiddleware = middlewares.SizeValidationMiddleware
+
+type SizeError = middlewares.SizeError
