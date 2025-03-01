@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 	"io"
 	"os"
+	"time"
 )
 
 var _ = Describe("Request", func() {
@@ -140,6 +141,84 @@ var _ = Describe("Request", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(string(cloneBody)).To(Equal(string(originalBody)))
+	})
+
+	// Add tests for the new methods
+	It("should set and use context correctly", func() {
+		req := core.NewRequest("GET", "http://example.com")
+
+		// Create a context with a timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		// Set the context
+		req = req.WithContext(ctx)
+
+		// Build the request with the context
+		httpReq, err := req.BuildHTTPRequest()
+		Expect(err).NotTo(HaveOccurred())
+
+		// The deadline from our context should be present in the request's context
+		deadline, hasDeadline := httpReq.Context().Deadline()
+		Expect(hasDeadline).To(BeTrue())
+		Expect(deadline).To(BeTemporally("~", time.Now().Add(100*time.Millisecond), 50*time.Millisecond))
+	})
+
+	It("should handle nil context gracefully", func() {
+		req := core.NewRequest("GET", "http://example.com")
+		req = req.WithContext(nil)
+
+		httpReq, err := req.BuildHTTPRequest()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(httpReq.Context()).NotTo(BeNil())
+	})
+
+	It("should set and get metadata correctly", func() {
+		req := core.NewRequest("GET", "http://example.com")
+
+		// Test with different types of values
+		req.SetMetadata("string", "test value")
+		req.SetMetadata("int", 42)
+		req.SetMetadata("bool", true)
+		req.SetMetadata("struct", struct{ Name string }{"Test"})
+
+		// Test retrieval
+		Expect(req.GetMetadata("string")).To(Equal("test value"))
+		Expect(req.GetMetadata("int")).To(Equal(42))
+		Expect(req.GetMetadata("bool")).To(Equal(true))
+		Expect(req.GetMetadata("struct")).To(Equal(struct{ Name string }{"Test"}))
+
+		// Test non-existent key
+		Expect(req.GetMetadata("nonexistent")).To(BeNil())
+	})
+
+	It("should preserve metadata when cloning", func() {
+		original := core.NewRequest("GET", "http://example.com")
+		original.SetMetadata("key", "value")
+
+		clone := original.Clone()
+		Expect(clone.GetMetadata("key")).To(Equal("value"))
+
+		// Modifying clone's metadata should not affect original
+		clone.SetMetadata("key", "new value")
+		Expect(original.GetMetadata("key")).To(Equal("value"))
+		Expect(clone.GetMetadata("key")).To(Equal("new value"))
+	})
+
+	It("should preserve context when cloning", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		original := core.NewRequest("GET", "http://example.com").WithContext(ctx)
+		clone := original.Clone()
+
+		originalReq, err := original.BuildHTTPRequest()
+		Expect(err).NotTo(HaveOccurred())
+		cloneReq, err := clone.BuildHTTPRequest()
+		Expect(err).NotTo(HaveOccurred())
+
+		// Both requests should have the same context
+		Expect(cloneReq.Context()).To(Equal(originalReq.Context()))
 	})
 
 	Context("SizeConfig", func() {

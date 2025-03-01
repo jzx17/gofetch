@@ -72,6 +72,10 @@ type Request struct {
 	isMultipart bool
 	// Holds any error encountered during body building.
 	buildErr error
+	// Context for the request
+	ctx context.Context
+	// Metadata storage for request-specific data
+	metadata map[string]interface{}
 }
 
 var byteBufferPool = sync.Pool{
@@ -102,7 +106,33 @@ func NewRequest(method, urlStr string) *Request {
 		url:         urlStr,
 		headers:     make(map[string]string),
 		queryParams: url.Values{},
+		ctx:         context.Background(), // Default context
 	}
+}
+
+// WithContext sets the context for a request
+func (r *Request) WithContext(ctx context.Context) *Request {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.ctx = ctx
+	return r
+}
+
+// SetMetadata adds metadata to the request
+func (r *Request) SetMetadata(key string, value interface{}) {
+	if r.metadata == nil {
+		r.metadata = make(map[string]interface{})
+	}
+	r.metadata[key] = value
+}
+
+// GetMetadata retrieves metadata from the request
+func (r *Request) GetMetadata(key string) interface{} {
+	if r.metadata == nil {
+		return nil
+	}
+	return r.metadata[key]
 }
 
 // Clone creates a deep copy of the Request
@@ -114,6 +144,7 @@ func (r *Request) Clone() *Request {
 		queryParams: url.Values{},
 		isMultipart: r.isMultipart,
 		buildErr:    r.buildErr,
+		ctx:         r.ctx, // Share the same context
 	}
 
 	// Copy headers
@@ -139,6 +170,14 @@ func (r *Request) Clone() *Request {
 			_, _ = buf.Seek(0, io.SeekStart) // Reset original reader
 			clone.body = bytes.NewReader(data)
 			clone.bodySize = size
+		}
+	}
+
+	// Copy metadata if present
+	if r.metadata != nil {
+		clone.metadata = make(map[string]interface{})
+		for k, v := range r.metadata {
+			clone.metadata[k] = v
 		}
 	}
 
@@ -299,7 +338,13 @@ func (r *Request) BuildHTTPRequest() (*http.Request, error) {
 	}
 	parsedURL.RawQuery = q.Encode()
 
-	httpReq, err := http.NewRequest(r.method, parsedURL.String(), r.body)
+	// Use the request's context if available, otherwise use background
+	ctx := r.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, r.method, parsedURL.String(), r.body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new HTTP request: %w", err)
 	}
@@ -320,9 +365,17 @@ func (r *Request) BuildHTTPRequest() (*http.Request, error) {
 
 // BuildHTTPRequestWithContext constructs an *http.Request with context from the Request.
 func (r *Request) BuildHTTPRequestWithContext(ctx context.Context) (*http.Request, error) {
+	// Save the current context
+	originalCtx := r.ctx
+
+	// Temporarily set the provided context
+	r.ctx = ctx
+
+	// Build the request
 	req, err := r.BuildHTTPRequest()
-	if err != nil {
-		return nil, err
-	}
-	return req.WithContext(ctx), nil
+
+	// Restore the original context
+	r.ctx = originalCtx
+
+	return req, err
 }
