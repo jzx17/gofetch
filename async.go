@@ -2,13 +2,25 @@ package gofetch
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 )
+
+// DoAsyncFunc is the function signature for the DoAsync method
+type DoAsyncFunc func(ctx context.Context, req *Request) <-chan AsyncResponse
 
 // DoAsync sends the HTTP request asynchronously. It launches a goroutine that calls Do and writes the result into a channel.
 func (c *Client) DoAsync(ctx context.Context, req *Request) <-chan AsyncResponse {
 	responseChan := make(chan AsyncResponse, 1)
 	go func() {
+		// Add panic recovery to prevent crashes
+		defer func() {
+			if r := recover(); r != nil {
+				responseChan <- AsyncResponse{Error: fmt.Errorf("panic occurred: %v", r)}
+				close(responseChan)
+			}
+		}()
 		res, err := c.Do(ctx, req)
 		responseChan <- AsyncResponse{Response: res, Error: err}
 		close(responseChan)
@@ -20,6 +32,13 @@ func (c *Client) DoAsync(ctx context.Context, req *Request) <-chan AsyncResponse
 func (c *Client) DoStreamAsync(ctx context.Context, req *Request) <-chan AsyncResponse {
 	responseChan := make(chan AsyncResponse, 1)
 	go func() {
+		// Add panic recovery to prevent crashes
+		defer func() {
+			if r := recover(); r != nil {
+				responseChan <- AsyncResponse{Error: fmt.Errorf("panic occurred: %v", r)}
+				close(responseChan)
+			}
+		}()
 		res, err := c.DoStream(ctx, req)
 		responseChan <- AsyncResponse{Response: res, Error: err}
 		close(responseChan)
@@ -31,6 +50,13 @@ func (c *Client) DoStreamAsync(ctx context.Context, req *Request) <-chan AsyncRe
 func (c *Client) ExecuteAsync(ctx context.Context, req *Request, opts ...ExecuteOption) <-chan AsyncResponse {
 	responseChan := make(chan AsyncResponse, 1)
 	go func() {
+		// Add panic recovery to prevent crashes
+		defer func() {
+			if r := recover(); r != nil {
+				responseChan <- AsyncResponse{Error: fmt.Errorf("panic occurred: %v", r)}
+				close(responseChan)
+			}
+		}()
 		res, err := c.Execute(ctx, req, opts...)
 		responseChan <- AsyncResponse{Response: res, Error: err}
 		close(responseChan)
@@ -40,27 +66,121 @@ func (c *Client) ExecuteAsync(ctx context.Context, req *Request, opts ...Execute
 
 // DoGroupAsync fires off multiple asynchronous HTTP requests concurrently,
 // one for each provided Request, and returns a channel that eventually yields a slice of AsyncResponse.
-func (c *Client) DoGroupAsync(ctx context.Context, requests ...*Request) <-chan []AsyncResponse {
+func (c *Client) DoGroupAsync(ctx context.Context, requests []*Request) <-chan []AsyncResponse {
 	channels := make([]<-chan AsyncResponse, len(requests))
 	for i, req := range requests {
 		channels[i] = c.DoAsync(ctx, req)
 	}
-	return c.JoinAsyncResponses(channels...)
+	return c.JoinAsyncResponses(ctx, channels...)
 }
 
-// JoinAsyncResponses aggregates multiple AsyncResponse channels into one.
-func (c *Client) JoinAsyncResponses(channels ...<-chan AsyncResponse) <-chan []AsyncResponse {
-	out := make(chan []AsyncResponse, 1)
+// GroupOptions specifies options for group async operations
+type GroupOptions struct {
+	IndividualTimeout time.Duration // Timeout for individual requests within a group
+	BufferSize        int           // Buffer size for result channel
+}
+
+// DoGroupAsyncWithOptions is like DoGroupAsync but with additional options
+func (c *Client) DoGroupAsyncWithOptions(ctx context.Context, requests []*Request, opts GroupOptions) <-chan []AsyncResponse {
+	// Apply individual timeouts if specified
+	channels := make([]<-chan AsyncResponse, len(requests))
+	cancelFuncs := make([]context.CancelFunc, len(requests))
+
+	for i, req := range requests {
+		requestCtx := ctx
+
+		if opts.IndividualTimeout > 0 {
+			var cancel context.CancelFunc
+			requestCtx, cancel = context.WithTimeout(ctx, opts.IndividualTimeout)
+			cancelFuncs[i] = cancel
+		}
+
+		// Use a new context for each request
+		thisReq := req.Clone().WithContext(requestCtx)
+		channels[i] = c.DoAsync(requestCtx, thisReq)
+	}
+
+	// Use specified buffer size or default to 1
+	bufferSize := 1
+	if opts.BufferSize > 0 {
+		bufferSize = opts.BufferSize
+	}
+
+	out := make(chan []AsyncResponse, bufferSize)
 	go func() {
+		// Add panic recovery to prevent crashes
+		defer func() {
+			// Ensure all timeouts are cleaned up
+			for _, cancel := range cancelFuncs {
+				if cancel != nil {
+					cancel()
+				}
+			}
+
+			if r := recover(); r != nil {
+				close(out)
+			}
+		}()
+
 		results := make([]AsyncResponse, len(channels))
 		var wg sync.WaitGroup
 		wg.Add(len(channels))
+
 		for i, ch := range channels {
 			go func(index int, ch <-chan AsyncResponse) {
-				results[index] = <-ch
-				wg.Done()
+				defer wg.Done()
+				defer func() {
+					// Clean up the timeout when done
+					if cancelFuncs[index] != nil {
+						cancelFuncs[index]()
+						cancelFuncs[index] = nil
+					}
+				}()
+
+				select {
+				case resp := <-ch:
+					results[index] = resp
+				case <-ctx.Done():
+					results[index] = AsyncResponse{Error: ctx.Err()}
+				}
 			}(i, ch)
 		}
+
+		wg.Wait()
+		out <- results
+		close(out)
+	}()
+
+	return out
+}
+
+// JoinAsyncResponses aggregates multiple AsyncResponse channels into one.
+func (c *Client) JoinAsyncResponses(ctx context.Context, channels ...<-chan AsyncResponse) <-chan []AsyncResponse {
+	out := make(chan []AsyncResponse, 1)
+	go func() {
+		// Add panic recovery to prevent crashes
+		defer func() {
+			if r := recover(); r != nil {
+				close(out)
+			}
+		}()
+
+		results := make([]AsyncResponse, len(channels))
+		var wg sync.WaitGroup
+		wg.Add(len(channels))
+
+		for i, ch := range channels {
+			go func(index int, ch <-chan AsyncResponse) {
+				defer wg.Done()
+				select {
+				case resp := <-ch:
+					results[index] = resp
+				case <-ctx.Done():
+					results[index] = AsyncResponse{Error: ctx.Err()}
+				}
+			}(i, ch)
+		}
+
 		wg.Wait()
 		out <- results
 		close(out)
@@ -74,7 +194,78 @@ func (c *Client) ExecuteGroupAsync(ctx context.Context, requests []*Request, opt
 	for i, req := range requests {
 		channels[i] = c.ExecuteAsync(ctx, req, opts...)
 	}
-	return c.JoinAsyncResponses(channels...)
+	return c.JoinAsyncResponses(ctx, channels...)
+}
+
+// ExecuteGroupAsyncWithOptions is like ExecuteGroupAsync but with additional group options
+func (c *Client) ExecuteGroupAsyncWithOptions(ctx context.Context, requests []*Request, groupOpts GroupOptions, execOpts ...ExecuteOption) <-chan []AsyncResponse {
+	channels := make([]<-chan AsyncResponse, len(requests))
+	cancelFuncs := make([]context.CancelFunc, len(requests))
+
+	for i, req := range requests {
+		requestCtx := ctx
+
+		if groupOpts.IndividualTimeout > 0 {
+			var cancel context.CancelFunc
+			requestCtx, cancel = context.WithTimeout(ctx, groupOpts.IndividualTimeout)
+			cancelFuncs[i] = cancel
+		}
+
+		// Use a new context for each request
+		thisReq := req.Clone().WithContext(requestCtx)
+		channels[i] = c.ExecuteAsync(requestCtx, thisReq, execOpts...)
+	}
+
+	bufferSize := 1
+	if groupOpts.BufferSize > 0 {
+		bufferSize = groupOpts.BufferSize
+	}
+
+	out := make(chan []AsyncResponse, bufferSize)
+	go func() {
+		defer func() {
+			// Ensure all timeouts are cleaned up
+			for _, cancel := range cancelFuncs {
+				if cancel != nil {
+					cancel()
+				}
+			}
+
+			if r := recover(); r != nil {
+				close(out)
+			}
+		}()
+
+		results := make([]AsyncResponse, len(channels))
+		var wg sync.WaitGroup
+		wg.Add(len(channels))
+
+		for i, ch := range channels {
+			go func(index int, ch <-chan AsyncResponse) {
+				defer wg.Done()
+				defer func() {
+					// Clean up the timeout when done
+					if cancelFuncs[index] != nil {
+						cancelFuncs[index]()
+						cancelFuncs[index] = nil
+					}
+				}()
+
+				select {
+				case resp := <-ch:
+					results[index] = resp
+				case <-ctx.Done():
+					results[index] = AsyncResponse{Error: ctx.Err()}
+				}
+			}(i, ch)
+		}
+
+		wg.Wait()
+		out <- results
+		close(out)
+	}()
+
+	return out
 }
 
 // GetAsync is a convenience wrapper for asynchronous GET requests.
