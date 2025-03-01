@@ -164,6 +164,15 @@ func NewStreamErrorReader(data []byte, err error) *StreamErrorReader {
 	}
 }
 
+// FakeNetError implements net.Error for testing.
+type FakeNetError struct {
+	Msg string
+}
+
+func (e *FakeNetError) Error() string   { return e.Msg }
+func (e *FakeNetError) Timeout() bool   { return true }
+func (e *FakeNetError) Temporary() bool { return true }
+
 // Helper function to create test middleware
 func CreateTestMiddleware(name string, fn func(req *http.Request)) middlewares.ConfigurableMiddleware {
 	return middlewares.CreateMiddleware(
