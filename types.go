@@ -25,5 +25,10 @@ var NewTLSTransport = core.NewTLSTransport
 var CreateMiddleware = middlewares.CreateMiddleware
 var ChainMiddlewares = middlewares.ChainMiddlewares
 var SizeValidationMiddleware = middlewares.SizeValidationMiddleware
+var RetryMiddleware = middlewares.RetryMiddleware
+var RateLimitMiddleware = middlewares.RateLimitMiddleware
 
 type SizeError = middlewares.SizeError
+type RetryError = middlewares.RetryError
+type TimeoutError = middlewares.TimeoutError
+type RateLimitExceededError = middlewares.RateLimitExceededError
