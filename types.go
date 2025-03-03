@@ -27,8 +27,13 @@ var ChainMiddlewares = middlewares.ChainMiddlewares
 var SizeValidationMiddleware = middlewares.SizeValidationMiddleware
 var RetryMiddleware = middlewares.RetryMiddleware
 var RateLimitMiddleware = middlewares.RateLimitMiddleware
+var LoggingMiddleware = middlewares.LoggingMiddleware
 
 type SizeError = middlewares.SizeError
 type RetryError = middlewares.RetryError
 type TimeoutError = middlewares.TimeoutError
 type RateLimitExceededError = middlewares.RateLimitExceededError
+type RateLimitOptions = middlewares.RateLimitOptions
+type LoggingOptions = middlewares.LoggingOptions
+type LogLevel = middlewares.LogLevel
+type LogFormat = middlewares.LogFormat
