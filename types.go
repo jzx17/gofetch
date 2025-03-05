@@ -3,7 +3,6 @@ package gofetch
 import (
 	"github.com/jzx17/gofetch/core"
 	"github.com/jzx17/gofetch/middlewares"
-	"time"
 )
 
 type Request = core.Request
@@ -29,6 +28,8 @@ var SizeValidationMiddleware = middlewares.SizeValidationMiddleware
 var RetryMiddleware = middlewares.RetryMiddleware
 var RateLimitMiddleware = middlewares.RateLimitMiddleware
 var LoggingMiddleware = middlewares.LoggingMiddleware
+var NewConstantDelayStrategy = middlewares.NewConstantDelayStrategy
+var NewExponentialBackoffStrategy = middlewares.NewExponentialBackoffStrategy
 
 type SizeError = middlewares.SizeError
 type RetryError = middlewares.RetryError
@@ -38,6 +39,9 @@ type RateLimitOptions = middlewares.RateLimitOptions
 type LoggingOptions = middlewares.LoggingOptions
 type LogLevel = middlewares.LogLevel
 type LogFormat = middlewares.LogFormat
+type RetryStrategy = middlewares.RetryStrategy
+type ConstantDelayStrategy = middlewares.ConstantDelayStrategy
+type ExponentialRetryStrategy = middlewares.ExponentialBackoffStrategy
 
 // RequestMethod represents HTTP request methods
 type RequestMethod string
@@ -151,34 +155,4 @@ func NewWebhookRequest(url string, payload interface{}, signature string) *Reque
 	return NewJSONRequest("POST", url, payload,
 		WithHeader("X-Webhook-Signature", signature),
 		WithHeader("User-Agent", "go-requests-webhook-client/1.0"))
-}
-
-// RetryStrategy defines how retry attempts are spaced
-type RetryStrategy interface {
-	// NextDelay returns the delay to wait for the next retry attempt
-	NextDelay(attempt int, lastError error) time.Duration
-}
-
-// ConstantRetryStrategy implements a constant delay between retries
-type ConstantRetryStrategy struct {
-	Delay time.Duration
-}
-
-func (s *ConstantRetryStrategy) NextDelay(attempt int, lastError error) time.Duration {
-	return s.Delay
-}
-
-// ExponentialRetryStrategy implements exponential backoff
-type ExponentialRetryStrategy struct {
-	InitialDelay time.Duration
-	MaxDelay     time.Duration
-	Factor       float64
-}
-
-func (s *ExponentialRetryStrategy) NextDelay(attempt int, lastError error) time.Duration {
-	delay := s.InitialDelay * time.Duration(s.Factor)
-	if delay > s.MaxDelay {
-		return s.MaxDelay
-	}
-	return delay
 }
